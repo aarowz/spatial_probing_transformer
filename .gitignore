@@ -1,0 +1,19 @@
+__pycache__/
+*.py[cod]
+*$py.class
+.Python
+.venv/
+venv/
+.env
+
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+*.egg-info/
+dist/
+build/
+
+# Generated training / visualization outputs (directory kept via outputs/.gitkeep)
+outputs/**/*.png
+outputs/**/*.pt
