@@ -1,5 +1,7 @@
 ![Spatial Probing Attention (step 200)](assets/attn_step_200.png)
 
+(note: transformer identifies "red" despite the orange block due to label space being fixed to 5 classes: white, red, green, blue, yellow)
+
 # Spatial-Probing Transformer (PoC)
 
 Custom scaled dot-product multi-head attention, patch + 2D sinusoidal embeddings, a small **SpatialProber** (image self-attention + coordinate cross-attention), synthetic point-probe data, training, and attention visualization.
