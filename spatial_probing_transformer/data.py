@@ -65,7 +65,12 @@ def queries_to_patch_indices(
 
 class PointProbeDataset(Dataset):
     """
-    Each sample: white canvas, K solid-colored patches (classes 1-4), N random queries in [0,1]^2.
+    Presentation Mode:
+      - Each image contains exactly two 16x16 patch-aligned squares:
+        - Red (class 1)
+        - Blue (class 3)
+      - The first query is always the exact center of the Red square.
+      - Remaining queries are uniform random in [0,1]^2.
 
     Returns:
         image: (3, img_size, img_size) float in [0, 1]
@@ -74,10 +79,8 @@ class PointProbeDataset(Dataset):
     """
 
     COLORS = {
-        1: (1.0, 0.0, 0.0),
-        2: (0.0, 1.0, 0.0),
-        3: (0.0, 0.0, 1.0),
-        4: (1.0, 1.0, 0.0),
+        1: (1.0, 0.0, 0.0),  # red
+        3: (0.0, 0.0, 1.0),  # blue
     }
 
     def __init__(
@@ -110,25 +113,34 @@ class PointProbeDataset(Dataset):
     def __len__(self) -> int:
         return self.length
 
-    def _make_image(self, g: torch.Generator) -> Tensor:
-        """Random colored patches on white background. Returns (3, H, W)."""
+    def _make_image(self, g: torch.Generator) -> Tuple[Tensor, int, int]:
+        """
+        White background with exactly two colored squares (Red and Blue).
+
+        Returns:
+            img: (3, H, W)
+            red_row, red_col: patch-grid coordinates of the Red square
+        """
         img = torch.ones(3, self.img_size, self.img_size, dtype=torch.float32)
 
         perm = torch.randperm(self.num_patches, generator=g)
-        chosen = perm[: self.k_patches]
+        red_idx = int(perm[0].item())
+        blue_idx = int(perm[1].item())
 
-        for idx in chosen:
-            cls = int(torch.randint(1, 5, (1,), generator=g).item())
-            r, gc, b = self.COLORS[cls]
-            row = int(idx) // self.grid_size
-            col = int(idx) % self.grid_size
+        red_row, red_col = red_idx // self.grid_size, red_idx % self.grid_size
+        blue_row, blue_col = blue_idx // self.grid_size, blue_idx % self.grid_size
+
+        def fill_patch(row: int, col: int, rgb: Tuple[float, float, float]) -> None:
             rs, re = row * self.patch_size, (row + 1) * self.patch_size
             cs, ce = col * self.patch_size, (col + 1) * self.patch_size
-            img[0, rs:re, cs:ce] = r
-            img[1, rs:re, cs:ce] = gc
-            img[2, rs:re, cs:ce] = b
+            img[0, rs:re, cs:ce] = rgb[0]
+            img[1, rs:re, cs:ce] = rgb[1]
+            img[2, rs:re, cs:ce] = rgb[2]
 
-        return img
+        fill_patch(red_row, red_col, self.COLORS[1])
+        fill_patch(blue_row, blue_col, self.COLORS[3])
+
+        return img, red_row, red_col
 
     def _labels_for_queries(self, img: Tensor, queries: Tensor) -> Tensor:
         """Pixel class labels for each query; queries (N, 2)."""
@@ -146,8 +158,15 @@ class PointProbeDataset(Dataset):
         g = torch.Generator()
         g.manual_seed(self.base_seed + int(idx))
 
-        img = self._make_image(g)
-        queries = torch.rand(self.n_queries, 2, generator=g, dtype=torch.float32)
+        img, red_row, red_col = self._make_image(g)
+
+        # query[0] is the exact pixel center of the Red square (normalized to [0,1]).
+        qx = (red_col * self.patch_size + self.patch_size / 2) / self.img_size
+        qy = (red_row * self.patch_size + self.patch_size / 2) / self.img_size
+        q0 = torch.tensor([qx, qy], dtype=torch.float32)
+
+        queries_rest = torch.rand(self.n_queries - 1, 2, generator=g, dtype=torch.float32)
+        queries = torch.cat([q0[None, :], queries_rest], dim=0)
         labels = self._labels_for_queries(img, queries)
 
         return img, queries, labels
@@ -167,9 +186,11 @@ if __name__ == "__main__":
     img, q, lab = ds[0]
     print("sample shapes:", img.shape, q.shape, lab.shape)
     print(render_sample(ds, 0))
+    print("presentation check: query[0] label =", int(lab[0].item()), "(expected 1=red)")
     hist = torch.bincount(lab, minlength=5)
     print("label histogram (first sample):", hist.tolist())
     assert img.shape == (3, 224, 224)
     assert q.shape == (16, 2)
     assert lab.shape == (16,)
+    assert int(lab[0].item()) == 1
     print("data.py smoke test OK.")

@@ -20,7 +20,7 @@ from pathlib import Path
 
 import torch
 import torch.nn.functional as F
-from torch.optim import AdamW
+from torch.optim import Adam
 from torch.utils.data import DataLoader
 
 from .data import PointProbeDataset, queries_to_patch_indices
@@ -33,13 +33,13 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 
 # PoC hyperparameters (no CLI)
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-BATCH_SIZE = 32
+BATCH_SIZE = 64
 N_QUERIES = 16
-STEPS = 500
-LR = 3e-4
+STEPS = 2000
+LR = 1e-3
 NUM_CLASSES = 5
-LOG_EVERY = 50
-PLOT_EVERY = 250  # save attention PNG every N steps (step-based; no epochs in this loop)
+LOG_EVERY = 100
+PLOT_EVERY = 500  # save attention PNG every N steps (step-based; no epochs in this loop)
 DATA_LEN = 50_000
 IMG_SIZE = 224
 PATCH_SIZE = 16
@@ -57,6 +57,7 @@ def _save_attention_plot(
     model: SpatialProber,
     val_imgs: torch.Tensor,
     val_queries: torch.Tensor,
+    val_labels: torch.Tensor,
     plots_dir: str,
     *,
     step_tag: str,
@@ -72,13 +73,15 @@ def _save_attention_plot(
     imgs = val_imgs.to(DEVICE)
     queries = val_queries.to(DEVICE)
     with torch.no_grad():
-        _, attn = model(imgs, queries)  # (B, H, N, 196)
+        logits, attn = model(imgs, queries)  # logits (B, N, C), attn (B, H, N, 196)
 
     b, q = sample_idx, query_idx
     image = val_imgs[b].detach().cpu().float()
     attn_h = attn[b, :, q, :].detach().cpu().float()  # (num_heads, 196)
     qx = float(val_queries[b, q, 0].item())
     qy = float(val_queries[b, q, 1].item())
+    pred_class = int(logits[b, q].argmax(dim=-1).item())
+    actual_class = int(val_labels[b, q].item())
 
     os.makedirs(plots_dir, exist_ok=True)
     out_path = os.path.join(plots_dir, f"attn_{step_tag}.png")
@@ -89,7 +92,10 @@ def _save_attention_plot(
         grid_size=GRID_SIZE,
         img_size=IMG_SIZE,
         query_xy=(qx, qy),
-        title=f"cross-attn sample={b} query={q} ({step_tag})",
+        predicted_class=pred_class,
+        actual_class=actual_class,
+        class_names=["white", "red", "green", "blue", "yellow"],
+        title=f"sample={b} query={q} ({step_tag})",
     )
     print(f"saved attention plot to {out_path}")
     return out_path
@@ -140,7 +146,7 @@ def train() -> None:
         patch_size=PATCH_SIZE,
     ).to(DEVICE)
 
-    opt = AdamW(model.parameters(), lr=LR, weight_decay=0.0)
+    opt = Adam(model.parameters(), lr=LR)
 
     it = iter(loader)
     for step in range(1, STEPS + 1):
@@ -167,7 +173,14 @@ def train() -> None:
             print(f"step {step:4d}  loss={loss.item():.4f}  acc={acc:.4f}")
 
         if step % PLOT_EVERY == 0:
-            _save_attention_plot(model, fixed_imgs, fixed_queries, plots_dir, step_tag=f"step_{step}")
+            _save_attention_plot(
+                model,
+                fixed_imgs,
+                fixed_queries,
+                fixed_labels,
+                plots_dir,
+                step_tag=f"step_{step}",
+            )
             model.train()
 
     # Validation-style batch + attention sanity check (fixed eval batch for metrics + plots)
@@ -208,7 +221,7 @@ def train() -> None:
         match_frac = (pred_patch == gt_patch).float().mean().item()
         print(f"fraction pred_patch == gt_patch (mean over batch): {match_frac:.4f}")
 
-        _save_attention_plot(model, fixed_imgs, fixed_queries, plots_dir, step_tag="final")
+        _save_attention_plot(model, fixed_imgs, fixed_queries, fixed_labels, plots_dir, step_tag="final")
 
 
 if __name__ == "__main__":

@@ -7,7 +7,7 @@ Requires matplotlib when calling visualize_attention.
 from __future__ import annotations
 
 import os
-from typing import Optional, Tuple, Union
+from typing import List, Optional, Tuple, Union
 
 import torch
 import torch.nn.functional as F
@@ -22,11 +22,17 @@ def visualize_attention(
     grid_size: int = 14,
     img_size: int = 224,
     query_xy: Optional[Tuple[float, float]] = None,
+    predicted_class: Optional[int] = None,
+    actual_class: Optional[int] = None,
+    class_names: Optional[List[str]] = None,
     title: Optional[str] = None,
     dpi: int = 120,
 ) -> str:
     """
-    Plot the input image (left) and per-head attention overlays (right grid).
+    3-panel visualization for cross-attention probing:
+      - Left: the question (image + query marker)
+      - Middle: the reasoning (mean cross-attention heatmap + token grid)
+      - Right: the answer (predicted vs actual class)
 
     Args:
         image: (3, img_size, img_size), float in [0, 1].
@@ -35,6 +41,9 @@ def visualize_attention(
         grid_size: Patch grid side length (default 14 for 224 / 16).
         img_size: Spatial size (must match image).
         query_xy: Optional (x, y) in [0, 1]; x = column, y = row (image coords).
+        predicted_class: Optional predicted class index.
+        actual_class: Optional ground-truth class index.
+        class_names: Optional list mapping class index to display name.
         title: Optional figure title.
         dpi: Figure DPI for savefig.
 
@@ -42,6 +51,7 @@ def visualize_attention(
         Resolved path string written to disk.
     """
     import matplotlib.pyplot as plt
+    from matplotlib.patches import Circle
 
     path_str = os.fspath(save_path)
     out_dir = os.path.dirname(path_str)
@@ -65,28 +75,30 @@ def visualize_attention(
     image = image.detach().float().cpu()
     attn = attn.detach().float().cpu()
 
-    attn_grid = attn.reshape(num_heads, grid_size, grid_size)
-    attn_up = F.interpolate(
-        attn_grid.unsqueeze(1),
+    attn_grid = attn.reshape(num_heads, grid_size, grid_size)  # (H, 14, 14)
+
+    # Mean over heads: (14, 14) -> upsample to (224, 224) for overlay
+    attn_mean = attn_grid.mean(dim=0, keepdim=False)  # (14, 14)
+    attn_mean_up = F.interpolate(
+        attn_mean[None, None, ...],
         size=(img_size, img_size),
         mode="bilinear",
         align_corners=False,
-    ).squeeze(1)
+    ).squeeze(0).squeeze(0)  # (224, 224)
 
     img_np = image.permute(1, 2, 0).clamp(0, 1).numpy()
 
-    # Layout: one tall axes for image (left), num_heads in ceil(H/4) x 4 grid (right)
-    ncols_right = min(4, num_heads)
-    nrows_right = (num_heads + ncols_right - 1) // ncols_right
-    fig_w = 3.0 * (1 + ncols_right)
-    fig_h = 3.0 * max(2, nrows_right)
-    fig = plt.figure(figsize=(fig_w, fig_h))
-    gs = fig.add_gridspec(nrows_right, ncols_right + 1, width_ratios=[1.4] + [1.0] * ncols_right)
+    if class_names is None:
+        class_names = ["white", "red", "green", "blue", "yellow"]
 
-    ax_img = fig.add_subplot(gs[:, 0])
-    ax_img.imshow(img_np)
-    ax_img.set_title("input")
-    ax_img.axis("off")
+    fig, (ax_q, ax_r, ax_a) = plt.subplots(1, 3, figsize=(15, 6))
+    fig.suptitle(
+        "Spatial Probing: Fusing Coordinates with Visual Tokens (Struct2D-inspired)",
+        fontsize=14,
+        y=0.98,
+    )
+    if title is not None:
+        fig.text(0.5, 0.93, title, ha="center", va="top", fontsize=10)
 
     px_plot: Optional[float] = None
     py_plot: Optional[float] = None
@@ -96,23 +108,52 @@ def visualize_attention(
         py = int(torch.tensor(qy * img_size).clamp(0, img_size - 1).item())
         px_plot = float(px)
         py_plot = float(py)
-        ax_img.plot(px_plot, py_plot, "rx", markersize=8, markeredgewidth=2)
+        # High-contrast marker: black halo + white outline circle
+        ax_q.add_patch(Circle((px_plot, py_plot), radius=14, fill=False, edgecolor="black", linewidth=4.0))
+        ax_q.add_patch(Circle((px_plot, py_plot), radius=14, fill=False, edgecolor="white", linewidth=2.5))
+        ax_r.add_patch(Circle((px_plot, py_plot), radius=14, fill=False, edgecolor="black", linewidth=4.0))
+        ax_r.add_patch(Circle((px_plot, py_plot), radius=14, fill=False, edgecolor="white", linewidth=2.5))
 
-    for h in range(num_heads):
-        r = h // ncols_right
-        c = 1 + (h % ncols_right)
-        ax = fig.add_subplot(gs[r, c])
-        ax.imshow(img_np)
-        ax.imshow(attn_up[h].numpy(), cmap="viridis", alpha=0.5)
-        ax.set_title(f"head {h}")
-        ax.axis("off")
-        if px_plot is not None and py_plot is not None:
-            ax.plot(px_plot, py_plot, "rx", markersize=6, markeredgewidth=2)
+    # Left: question
+    ax_q.imshow(img_np)
+    ax_q.set_title("Query: What is at this (x,y)?")
+    ax_q.axis("off")
 
-    if title is not None:
-        fig.suptitle(title)
+    # Middle: reasoning (mean attention + subtle patch grid)
+    ax_r.imshow(img_np)
+    ax_r.imshow(attn_mean_up.numpy(), cmap="viridis", alpha=0.55)
+    patch_size = img_size // grid_size
+    for i in range(1, grid_size):
+        ax_r.axhline(i * patch_size, color="white", linewidth=0.5, alpha=0.3)
+        ax_r.axvline(i * patch_size, color="white", linewidth=0.5, alpha=0.3)
+    ax_r.set_title("Transformer's Focus (Cross-Attention)")
+    ax_r.axis("off")
 
-    fig.tight_layout()
+    # Right: answer
+    ax_a.axis("off")
+    ax_a.set_title("Prediction Result")
+    if predicted_class is None or actual_class is None:
+        ax_a.text(0.5, 0.5, "(prediction unavailable)", ha="center", va="center", fontsize=14)
+    else:
+        pred_name = class_names[predicted_class] if 0 <= predicted_class < len(class_names) else str(predicted_class)
+        act_name = class_names[actual_class] if 0 <= actual_class < len(class_names) else str(actual_class)
+        correct = predicted_class == actual_class
+        ax_a.text(0.5, 0.65, f"Predicted: {pred_name}", ha="center", va="center", fontsize=16)
+        ax_a.text(0.5, 0.50, f"Actual:    {act_name}", ha="center", va="center", fontsize=16)
+        ax_a.text(
+            0.5,
+            0.32,
+            "Correct" if correct else "Incorrect",
+            ha="center",
+            va="center",
+            fontsize=18,
+            fontweight="bold",
+            color=("green" if correct else "red"),
+        )
+        if query_xy is not None:
+            ax_a.text(0.5, 0.18, f"query_xy=({query_xy[0]:.3f}, {query_xy[1]:.3f})", ha="center", va="center", fontsize=10)
+
+    fig.tight_layout(rect=[0, 0, 1, 0.90])
     fig.savefig(path_str, dpi=dpi, bbox_inches="tight")
     plt.close(fig)
 
@@ -133,6 +174,8 @@ if __name__ == "__main__":
             attn,
             save_path,
             query_xy=(0.5, 0.5),
+            predicted_class=1,
+            actual_class=1,
             title="smoke test",
         )
         print("saved:", p)

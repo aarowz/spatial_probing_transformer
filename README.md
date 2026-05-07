@@ -1,3 +1,5 @@
+![Spatial Probing Attention (step 500)](outputs/plots/attn_step_500.png)
+
 # Spatial-Probing Transformer (PoC)
 
 Custom scaled dot-product multi-head attention, patch + 2D sinusoidal embeddings, a small **SpatialProber** (image self-attention + coordinate cross-attention), synthetic point-probe data, training, and attention visualization.
