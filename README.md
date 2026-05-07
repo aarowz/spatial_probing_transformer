@@ -74,6 +74,83 @@ You can always invoke the venv interpreter explicitly:
 - **`ModuleNotFoundError: spatial_probing_transformer`**: run `pip install -e ".[dev]"` **with the venv activated** (or use `.venv/bin/pip install -e ".[dev]"` once).
 - **Wrong Python**: confirm `which python` (macOS/Linux) or `where python` (Windows) resolves inside `.venv` after `activate`.
 
+## Run on Explorer (Northeastern HPC)
+
+Use **scratch** for the conda environment and package caches (not `~/`) to avoid home-directory quota errors. Install **`numpy<2`** and **matplotlib** from conda so extensions match; base Anaconda can ship NumPy 2.x and break `matplotlib` with `ImportError: numpy.core.multiarray failed to import`.
+
+### A. One-time rsync from your Mac (repo root)
+
+```bash
+cd /Users/az/Documents/GitHub/spatial_probing_transformer
+rsync -avz --delete \
+  --exclude='.venv/' --exclude='.git/' --exclude='outputs/' \
+  --exclude='__pycache__/' --exclude='*.pyc' --exclude='.pytest_cache/' \
+  --exclude='*.egg-info/' --exclude='.DS_Store' \
+  ./ zhou.aa@login.explorer.northeastern.edu:/scratch/zhou.aa/spatial_probing_transformer/
+```
+
+### B. SSH and request a GPU
+
+```bash
+ssh zhou.aa@login.explorer.northeastern.edu
+job-assist   # e.g. interactive -> gpu -> v100-sxm2 -> 1 node, 1 task, 4 cpus, 08:00:00, 1GB
+```
+
+### C. One-time: conda environment on `/scratch` (and sanity check)
+
+```bash
+module load anaconda3/2024.06
+source "$(conda info --base)/etc/profile.d/conda.sh"
+
+export CONDA_ENVS_PATH=/scratch/zhou.aa/conda-envs
+export CONDA_PKGS_DIRS=/scratch/zhou.aa/conda-pkgs
+export CONDA_TMPDIR=/scratch/zhou.aa/conda-tmp
+export TMPDIR=/scratch/zhou.aa/tmp
+export PIP_CACHE_DIR=/scratch/zhou.aa/pip-cache
+export MPLCONFIGDIR=/scratch/zhou.aa/mpl-config
+mkdir -p /scratch/zhou.aa/{conda-envs,conda-pkgs,conda-tmp,tmp,pip-cache,mpl-config}
+
+rm -rf /scratch/zhou.aa/conda-envs/spt
+
+conda create -y -p /scratch/zhou.aa/conda-envs/spt python=3.11
+conda activate /scratch/zhou.aa/conda-envs/spt
+
+conda install -y -c pytorch -c nvidia -c conda-forge \
+  pytorch pytorch-cuda=12.1 "numpy<2" matplotlib
+
+cd /scratch/zhou.aa/spatial_probing_transformer
+python -m pip install -U pip
+python -m pip install -e ".[dev]"
+
+python -c "import sys, numpy, matplotlib, torch; print(sys.executable); print('numpy', numpy.__version__); print('mpl', matplotlib.__version__); print('torch', torch.__version__, 'cuda', torch.cuda.is_available())"
+```
+
+Confirm `sys.executable` is under `/scratch/zhou.aa/conda-envs/spt/bin/python` and NumPy is **below 2.0**.
+
+### D. Each session: activate and train
+
+```bash
+module load anaconda3/2024.06
+source "$(conda info --base)/etc/profile.d/conda.sh"
+export CONDA_ENVS_PATH=/scratch/zhou.aa/conda-envs
+export MPLCONFIGDIR=/scratch/zhou.aa/mpl-config
+export TMPDIR=/scratch/zhou.aa/tmp
+
+conda activate /scratch/zhou.aa/conda-envs/spt
+cd /scratch/zhou.aa/spatial_probing_transformer
+python scripts/train.py
+```
+
+Artifacts: `/scratch/zhou.aa/spatial_probing_transformer/outputs/plots/*.png` and `outputs/attn.pt`.
+
+### Pull outputs back to your Mac
+
+```bash
+rsync -avz \
+  zhou.aa@login.explorer.northeastern.edu:/scratch/zhou.aa/spatial_probing_transformer/outputs/ \
+  /Users/az/Documents/GitHub/spatial_probing_transformer/outputs/
+```
+
 ## Use the library
 
 ```python
