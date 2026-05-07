@@ -1,4 +1,4 @@
-![Spatial Probing Attention (step 500)](assets/attn_step_500.png)
+![Spatial Probing Attention (correct prediction)](assets/attn_final.png)
 
 # Spatial-Probing Transformer (PoC)
 

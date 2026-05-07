@@ -33,14 +33,14 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 
 # PoC hyperparameters (no CLI)
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-BATCH_SIZE = 64
-N_QUERIES = 16
-STEPS = 2000
-LR = 1e-3
+BATCH_SIZE = 10
+N_QUERIES = 1
+STEPS = 200
+LR = 5e-3
 NUM_CLASSES = 5
-LOG_EVERY = 100
-PLOT_EVERY = 500  # save attention PNG every N steps (step-based; no epochs in this loop)
-DATA_LEN = 50_000
+LOG_EVERY = 20
+PLOT_EVERY = 200  # save attention PNG every N steps (step-based; no epochs in this loop)
+DATA_LEN = 10
 IMG_SIZE = 224
 PATCH_SIZE = 16
 GRID_SIZE = IMG_SIZE // PATCH_SIZE
