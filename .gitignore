@@ -5,6 +5,7 @@ __pycache__/
 .venv/
 venv/
 .env
+.vscode/
 
 .pytest_cache/
 .mypy_cache/
@@ -17,3 +18,7 @@ build/
 # Generated training / visualization outputs (directory kept via outputs/.gitkeep)
 outputs/**/*.png
 outputs/**/*.pt
+
+# Root-level artifacts (should not be committed)
+attn.pt
+*.pt
